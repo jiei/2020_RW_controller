@@ -1,0 +1,4 @@
+bldc.c:14:7:bldc_get_speed	8	static
+bldc.c:18:7:bldc_get_current	8	static
+bldc.c:22:10:bldc_current_to_pulse	16	static
+bldc.c:26:10:bldc_speed_to_pulse	16	static
