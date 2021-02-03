@@ -88,13 +88,14 @@ typedef struct
     float actual_speed;
     float angle_base;
     float angle_error;
+    float angle_error_integrated;
     float speed_error;
 } Machine_Angle;
 
 Lpme1_Data lpme1Data;
 Machine_Angle ma;
 float tmp_output=0;
-float K_angle=0.011, K_omega=0.01;
+float K_angle=0.011, K_omega=0.01, K_integrate=0.00001;
 float torque_coef = 75.76;
 float max_current = 0.8;
 
@@ -284,6 +285,7 @@ void setup(void){
 	ma.actual_angle = 0;
 	ma.actual_speed = 0;
 	ma.angle_base = 0;
+	ma.angle_error_integrated = 0;
 
 
 	HAL_Delay(300);
@@ -339,6 +341,7 @@ void loop(void){
 		ma.angle_base = lpme1Data.euler[2];
 		ma.target_angle = ma.angle_base + PI;
 		ma.target_speed = 0;
+		ma.angle_error_integrated = 0;
 		rw_motor.enable=1;
 		logger_flag = 1;
 		break;
@@ -421,8 +424,10 @@ void motor_control(void){
 
 	ma.speed_error = ma.target_speed - lpme1Data.gyr[1];
 
+	ma.angle_error_integrated += ma.angle_error;
+
 #ifdef ENABLE_FB
-	tmp_output = torque_coef * (ma.angle_error * K_angle + ma.speed_error * K_omega);
+	tmp_output = torque_coef * (ma.angle_error * K_angle + ma.speed_error * K_omega + ma.angle_error_integrated * K_integrate);
 	if(tmp_output > max_current){
 		tmp_output = max_current;
 	} else if(tmp_output < (-1)*max_current){
@@ -509,6 +514,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				ma.target_angle = ma.angle_base;
 				ma.target_speed = 0;
 				rw_motor.enable = 1;
+				ma.angle_error_integrated = 0;
 				speed_observation_flag=0;
 				logger_flag = 1;
 			}
