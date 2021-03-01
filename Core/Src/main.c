@@ -53,19 +53,20 @@
 
 /*
  * Mode current control or speed control
+ * RWの制御は基本的に電流制御
  */
 #define CURRENT_MODE
 //#define SPEED_MODE
 
 /*
- * Enable FB
+ * Enable feed back control
  */
 #define ENABLE_FB
 
 /*
  * Enable Beep
  */
-//#define ENABLE_BEEP
+#define ENABLE_BEEP
 
 #ifndef PI
 #define PI 3.1415
@@ -92,11 +93,11 @@ typedef struct
     float speed_error;
 } Machine_Angle;
 
-Lpme1_Data lpme1Data;
-Machine_Angle ma;
+Lpme1_Data lpme1Data;	//imu data
+Machine_Angle ma;		//machine angle state
 float tmp_output=0;
-float K_angle=0.011, K_omega=0.01, K_integrate=0.00001;
-float torque_coef = 75.76;
+float K_angle=0.011, K_omega=0.01, K_integrate=0.00001;	//control gain
+float torque_coef = 75.76;	//torque coefficient
 float max_current = 0.8;
 
 uint8_t speed_observation_flag=0;
@@ -125,6 +126,7 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//printfを複数のuartチャンネルで使用するため
 void __io_putchar(uint8_t ch) {
 	if(uart_key==1){
 		HAL_UART_Transmit(&huart1, &ch, 1, 1);
@@ -321,6 +323,7 @@ void loop(void){
 		rw_motor.target_speed=0;
 		rw_motor.target_current=0;
 		break;
+
 	case 'i':	//start
 		uart_key=1;
 		printf("\r\nCURRENT ENABLE\r\n");
@@ -329,13 +332,15 @@ void loop(void){
 		rw_motor.target_current=0.3;
 		rw_motor.enable=1;
 		break;
-	case 'o':
+
+	case 'o':	//定電流制御
 		uart_key=1;
-		//printf("\r\nCURRENT ENABLE\r\n");
+		printf("\r\nCURRENT ENABLE\r\n");
 		rw_motor.target_current=-0.1;
 		rw_motor.enable=1;
 		break;
-	case 'x':	//control start
+
+	case 'x':	//180度姿勢変更
 		uart_key=1;
 		printf("\r\nControl Start !!!\r\n");
 		ma.angle_base = lpme1Data.euler[2];
@@ -345,14 +350,10 @@ void loop(void){
 		rw_motor.enable=1;
 		logger_flag = 1;
 		break;
-	case 'X':
+
+	case 'X':	//安定状態遷移
 		uart_key=1;
 		printf("\r\nControl Start !!!\r\n");
-		/*ma.angle_base = lpme1Data.euler[2];
-		ma.target_angle = ma.angle_base + PI;
-		ma.target_speed = 0;
-		rw_motor.enable=1;*/
-		//logger_flag = 1;
 		speed_observation_flag=1;
 		break;
 
@@ -361,16 +362,16 @@ void loop(void){
 		printf("\r\nMOTOR ENABLE\r\n");
 		rw_motor.enable=1;
 		break;
+
 	case 'p':	//change target speed
 		uart_key=1;
 		printf("\r\neneble:%d, direction:%d, speed:%d, current:%d\r\n", rw_motor.enable, rw_motor.direction,(int)(1000 * rw_motor.target_current), (int)(rw_motor.target_speed));
 		break;
+
 	case 'R':	//system reset
 		HAL_NVIC_SystemReset();
 		break;
-	default:
 
-		break;
 	}
 	key='0';
 
@@ -394,6 +395,9 @@ void loop(void){
 	HAL_Delay(500);
 }
 
+/*
+ * Buzzer control
+ */
 void buzzer_output(_Bool state){
 #ifdef ENABLE_BEEP
 	if(state==1){
@@ -406,9 +410,11 @@ void buzzer_output(_Bool state){
 }
 
 void motor_control(void){
+	//Feed back状態変数の更新
 	rw_motor.actual_current = bldc_get_current(ADC_Data1[0]);
 	rw_motor.actual_speed = bldc_get_speed(ADC_Data1[1]);
 
+	//ベース角度からの偏差(-PI~PI)を計算
 	ma.actual_angle = lpme1Data.euler[2] - ma.angle_base;
 	if(ma.actual_angle < (-1)*PI){
 		ma.actual_angle = (-1) * ma.actual_angle - PI;
@@ -416,18 +422,22 @@ void motor_control(void){
 		ma.actual_angle = (-1) * ma.actual_angle + PI;
 	}
 
-	//ベクトルの内積と外積を利用して目標角と現在角の偏差を計算する
+	//ベクトルの内積と外積を利用して目標角と現在角の偏差を計算
 	ma.angle_error = acos(cos(lpme1Data.euler[2]) * cos(ma.target_angle) + sin(lpme1Data.euler[2]) * sin(ma.target_angle));
 	if((cos(lpme1Data.euler[2]) * sin(ma.target_angle) - sin(lpme1Data.euler[2]) * cos(ma.target_angle)) < 0){
 		ma.angle_error = (-1) * ma.angle_error;
 	}
 
+	//角速度の目標値との偏差を計算
 	ma.speed_error = ma.target_speed - lpme1Data.gyr[1];
 
+	//積分項の計算
 	ma.angle_error_integrated += ma.angle_error;
 
 #ifdef ENABLE_FB
+	//フィードバック制御のメイン計算
 	tmp_output = torque_coef * (ma.angle_error * K_angle + ma.speed_error * K_omega + ma.angle_error_integrated * K_integrate);
+	//電流制限
 	if(tmp_output > max_current){
 		tmp_output = max_current;
 	} else if(tmp_output < (-1)*max_current){
@@ -442,6 +452,7 @@ void motor_control(void){
 	} else {
 		rw_motor.direction = 0;
 	}
+	//コントローラへのpwmのdutyを決定
 	rw_motor.pwm_pulse = bldc_current_to_pulse(rw_motor.target_current);
 #endif
 
@@ -454,18 +465,21 @@ void motor_control(void){
 	rw_motor.pwm_pulse = bldc_speed_to_pulse(rw_motor.target_speed);
 #endif
 
+	//コントローラのenableピンの制御
 	if(rw_motor.enable==1){
 		HAL_GPIO_WritePin(rw_enable_GPIO_Port, rw_enable_Pin, GPIO_PIN_SET);
 	} else {
 		HAL_GPIO_WritePin(rw_enable_GPIO_Port, rw_enable_Pin, GPIO_PIN_RESET);
 	}
 
+	//コントローラの方向性魚ピンの制御
 	if(rw_motor.direction==1){
 		HAL_GPIO_WritePin(GPIOB, rw_direction_Pin, GPIO_PIN_SET);
 	} else {
 		HAL_GPIO_WritePin(GPIOB, rw_direction_Pin, GPIO_PIN_RESET);
 	}
 
+	//コントローラのpwm入力の制御
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, rw_motor.pwm_pulse);
 }
 
@@ -483,6 +497,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		/* モータ制御値の計算，モータ関連ピンの制御 */
 		motor_control();
 
+		//ロガーへのデータ送信
 		if(logger_flag==1){
 			uart_key = 2;
 			//Time [ms], ma.angle_error [*10^-2 deg], ma.speed_error [*10^-2 deg/s], actual_current [*10^-2 mA], actual_speed [rpm]
@@ -500,7 +515,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		 * 実際の安定角度と機体角速度が最大になる瞬間には差が存在するため，
 		 * ベストな推定法ではない
 		 */
-
 		if(speed_observation_flag==1){
 			old_speed = now_speed;
 			now_speed = lpme1Data.gyr[1];

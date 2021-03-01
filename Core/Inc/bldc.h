@@ -9,16 +9,16 @@
 #ifndef INC_BLDC_H_
 #define INC_BLDC_H_
 
-#define MAX_SPEED_RANGE 8000
-#define MAX_CURRENT_RANGE 2.0
+#define MAX_SPEED_RANGE 8000	//速度レンジ -8000~8000[rpm]
+#define MAX_CURRENT_RANGE 2.0	//電流レンジ -2.0~2.0[A]
 
 typedef struct
 {
-    float target_current;
-    float target_speed;
-    float actual_current;
-    float actual_speed;
-    _Bool enable;
+    float target_current;	//目標電流値
+    float target_speed;		//目標速度
+    float actual_current;	//測定電流値
+    float actual_speed;		//測定速度
+    _Bool enable;			//enable or not
     _Bool direction;
     uint16_t pwm_pulse;
 } Bldc_State;
